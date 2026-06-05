@@ -91,7 +91,7 @@ Obsidian on Mac / iPhone
 | `package.json` | WhatsApp bridge dependencies |
 | `whisper-api.py` | Groq Whisper helper API |
 | `ytdlp-api.py` | Video metadata/transcript helper API |
-| `n8n.zip` | n8n workflow exports |
+| `n8n-workflows/*.json` | n8n workflow exports |
 
 ### Requirements
 
@@ -117,7 +117,7 @@ cp whisper-api.py /root/whisper-api.py
 ```
 
 5. Mount `/root/config.json` and `/root/knowledge` into n8n.
-6. Import the workflows from `n8n.zip`.
+6. Import the workflows from `n8n-workflows/*.json`.
 7. Add Telegram credentials to the Telegram nodes.
 8. Activate the workflows.
 9. Optional: run the WhatsApp bridge from `index.js`.
@@ -205,7 +205,7 @@ Hermes:
 | `package.json` | اعتماديات جسر واتساب |
 | `whisper-api.py` | خدمة تفريغ الصوت عبر Groq Whisper |
 | `ytdlp-api.py` | خدمة معلومات الفيديو والترجمة |
-| `n8n.zip` | ملفات سير العمل الخاصة بـ n8n |
+| `n8n-workflows/*.json` | ملفات سير العمل الخاصة بـ n8n |
 
 ### ملخص الإعداد
 
@@ -214,7 +214,7 @@ Hermes:
 3. انسخ `config.example.json` إلى `/root/config.json` وضع مفاتيحك الخاصة.
 4. ثبّت السكربتات المساعدة.
 5. اربط `/root/config.json` و `/root/knowledge` داخل n8n.
-6. استورد سير العمل من `n8n.zip`.
+6. استورد سير العمل من `n8n-workflows/*.json`.
 7. أضف بيانات تيليغرام إلى عقد تيليغرام داخل n8n.
 8. فعّل سير العمل.
 9. اختياري: شغّل جسر واتساب.
