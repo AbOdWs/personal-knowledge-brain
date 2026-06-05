@@ -6,7 +6,7 @@ A self-hosted personal knowledge brain for Telegram, WhatsApp, and Obsidian. Sen
 
 Built by **Abdullah Altamimi** · [X @AbOd](https://x.com/AbOd) · [First iPhone app: Aish Awfar](https://apps.abod.ws/aish)
 
-If this project helps you, you can use my [Hostinger referral link](https://www.hostinger.com?REFERRALCODE=GIQKABOD9A2H) when setting up your VPS.
+If this project helps you, you can use my [Hostinger referral link](https://apps.abod.ws/hostinger) when setting up your VPS.
 
 ---
 
@@ -105,7 +105,7 @@ Obsidian on Mac / iPhone
 
 ### Setup Summary
 
-1. Get a VPS. I used Hostinger; my referral link is [https://www.hostinger.com?REFERRALCODE=GIQKABOD9A2H](https://www.hostinger.com?REFERRALCODE=GIQKABOD9A2H).
+1. Get a VPS. I used Hostinger; my referral link is [https://apps.abod.ws/hostinger](https://apps.abod.ws/hostinger).
 2. Install n8n on the VPS.
 3. Copy `config.example.json` to `/root/config.json` and fill in your own keys.
 4. Install the helper scripts:
@@ -143,7 +143,7 @@ Built by **Abdullah Altamimi**.
 
 - X: [@AbOd](https://x.com/AbOd)
 - First iPhone app: [Aish Awfar](https://apps.abod.ws/aish)
-- VPS referral: [Hostinger](https://www.hostinger.com?REFERRALCODE=GIQKABOD9A2H)
+- VPS referral: [Hostinger](https://apps.abod.ws/hostinger)
 
 ---
 
@@ -209,7 +209,7 @@ Hermes:
 
 ### ملخص الإعداد
 
-1. احصل على VPS. استخدمت Hostinger، وهذا رابط الإحالة الخاص بي: [https://www.hostinger.com?REFERRALCODE=GIQKABOD9A2H](https://www.hostinger.com?REFERRALCODE=GIQKABOD9A2H).
+1. احصل على VPS. استخدمت Hostinger، وهذا رابط الإحالة الخاص بي: [https://apps.abod.ws/hostinger](https://apps.abod.ws/hostinger).
 2. ثبّت n8n على الخادم.
 3. انسخ `config.example.json` إلى `/root/config.json` وضع مفاتيحك الخاصة.
 4. ثبّت السكربتات المساعدة.
@@ -236,7 +236,7 @@ Hermes:
 
 - X: [@AbOd](https://x.com/AbOd)
 - تطبيقي الأول على الآيفون: [Aish Awfar](https://apps.abod.ws/aish)
-- رابط Hostinger للإحالة: [Hostinger](https://www.hostinger.com?REFERRALCODE=GIQKABOD9A2H)
+- رابط Hostinger للإحالة: [Hostinger](https://apps.abod.ws/hostinger)
 
 ## License
 
