@@ -1,0 +1,351 @@
+{
+  "name": "Hermes AbOdLinks Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        1216,
+        1280
+      ],
+      "webhookId": "YOUR_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "",
+              "leftValue": "={{ $json.message.text }}",
+              "rightValue": "^https?://",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "",
+      "name": "Is it a URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst result = $('Save Link').item.json;\nconst chatId = $('Telegram Trigger').item.json.message.chat.id;\n\nlet text;\nif (result.duplicate) {\n  text = '⚠️ Already saved this link before';\n} else {\n  text = `✅ Saved to ${result.category}\\n\\n📌 ${result.title}\\n${result.summary}\\n\\n🏷 ${result.tags}`;\n}\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/sendMessage',\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    chat_id: chatId,\n    text: text\n  }\n});\n\nreturn { sent: true };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        960
+      ],
+      "id": "",
+      "name": "Reply:Saved"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\n// Line 4: Parse URL and personal note from message\nconst fullText = $('Telegram Trigger').item.json.message.text.trim();\nconst urlMatch = fullText.match(/https?:\\/\\/[^\\s]+/);\nif (!urlMatch) return [];\nconst originalUrl = urlMatch[0];\nconst rawNote = fullText.replace(originalUrl, '').trim();\n\n// Line 10: Detect reminder instruction\nconst remindMatch = rawNote.match(/\\/remind\\s+(\\d+)(day|days|week|weeks|month|months)/i);\nlet reminderDate = null;\nlet personalNote = rawNote.replace(/\\/remind\\s+\\S+/i, '').trim();\n\nif (remindMatch) {\n  const amount = parseInt(remindMatch[1]);\n  const unit = remindMatch[2].toLowerCase();\n  const d = new Date();\n  if (unit.startsWith('day')) d.setDate(d.getDate() + amount);\n  else if (unit.startsWith('week')) d.setDate(d.getDate() + amount * 7);\n  else if (unit.startsWith('month')) d.setMonth(d.getMonth() + amount);\n  reminderDate = d.toISOString().split('T')[0];\n}\n\n// Line 23: Declare variables\nlet pageContent = '';\nconst videoPatterns = ['tiktok.com', 'youtube.com', 'youtu.be', 'instagram.com'];\nconst isVideo = videoPatterns.some(p => originalUrl.includes(p));\nconst isTelegram = originalUrl.includes('t.me/');\nconst isTwitter = originalUrl.includes('x.com') || originalUrl.includes('twitter.com');\n\n// Line 29: Step 0 - Use yt-dlp API for video links\nif (isVideo) {\n  try {\n    const ytResponse = await this.helpers.httpRequest({\n      method: 'GET',\n      url: config.ytdlp_api_url + '/' + encodeURIComponent(originalUrl),\n      timeout: 35000\n    });\n    pageContent = ytResponse.content || '';\n  } catch(e) {\n    pageContent = '';\n  }\n}\n// Line 39: Detect Reddit links\nconst isReddit = originalUrl.includes('reddit.com') || originalUrl.includes('redd.it');\n// Line 40: Step 0b - Fetch X.com post via oEmbed\nif (isTwitter) {\n  try {\n    const oembedResponse = await this.helpers.httpRequest({\n      method: 'GET',\n      url: 'https://publish.twitter.com/oembed?url=' + encodeURIComponent(originalUrl) + '&omit_script=true',\n      timeout: 10000\n    });\n    const html = oembedResponse.html || '';\n    pageContent = html.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n    if (oembedResponse.author_name) {\n      pageContent = 'Author: ' + oembedResponse.author_name + ' | ' + pageContent;\n    }\n  } catch(e) {\n    pageContent = 'X.com post — could not fetch content.';\n  }\n}\n// Step 0c - Extract Reddit info from URL\nif (isReddit && !pageContent) {\n  const subredditMatch = originalUrl.match(/reddit\\.com\\/r\\/([^\\/]+)/);\n  const slugMatch = originalUrl.match(/comments\\/[^\\/]+\\/([^\\/\\?]+)/);\n  const subreddit = subredditMatch ? subredditMatch[1] : '';\n  const slug = slugMatch ? slugMatch[1].replace(/_/g, ' ') : '';\n  pageContent = 'Reddit post' + \n    (subreddit ? ' in r/' + subreddit : '') + \n    (slug ? ': ' + slug : '') +\n    '. URL: ' + originalUrl;\n}\n// Line 54: Step 0c - Fetch Telegram post content via Bot API\nif (isTelegram) {\n  try {\n    const tgMatch = originalUrl.match(/t\\.me\\/(?:c\\/)?([^\\/]+)\\/(\\d+)/);\n    if (tgMatch) {\n      const chatId = tgMatch[1].startsWith('c/') ? '-100' + tgMatch[1] : '@' + tgMatch[1];\n      const messageId = tgMatch[2];\n      const tgResponse = await this.helpers.httpRequest({\n        method: 'GET',\n        url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/forwardMessage',\n        body: {\n          chat_id: config.telegram_chat_id,\n          from_chat_id: chatId,\n          message_id: parseInt(messageId)\n        }\n      });\n      pageContent = tgResponse?.result?.text || tgResponse?.result?.caption || '';\n    }\n  } catch(e) {\n    pageContent = '';\n  }\n}\n\n// Line 74: Step 1 - Fetch page content via Firecrawl\nif (!isVideo && !isTelegram && !isTwitter && !isReddit) {\n  try {\n    const crawlResponse = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://api.firecrawl.dev/v1/scrape',\n      headers: {\n        'Content-Type': 'application/json',\n        'Authorization': 'Bearer ' + config.firecrawl_api_key\n      },\n      body: {\n        url: originalUrl,\n        formats: ['markdown'],\n        onlyMainContent: true\n      },\n      timeout: 30000\n    });\n    const content = crawlResponse?.data?.markdown || crawlResponse?.markdown || '';\n    pageContent = content.slice(0, 3000);\n  } catch(e) {\n    pageContent = 'Could not fetch page. URL: ' + originalUrl;\n  }\n}\n\n// Line 95: Check for duplicates\ntry {\n  const files = fs.readdirSync(config.knowledge_dir).filter(f => f.endsWith('.md'));\n  for (const file of files) {\n    const content = fs.readFileSync(config.knowledge_dir + '/' + file, 'utf8');\n    if (content.includes(originalUrl)) {\n      return {\n        success: false,\n        duplicate: true,\n        message: 'Already saved this link before'\n      };\n    }\n  }\n} catch(e) {}\n\n// Line 107: Step 2 - Ask Groq to analyze\nconst groqResponse = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.groq.com/openai/v1/chat/completions',\n  headers: {\n    'Content-Type': 'application/json',\n    'Authorization': 'Bearer ' + config.groq_api_key\n  },\n  body: {\n    model: 'llama-3.3-70b-versatile',\n    temperature: 0.1,\n    messages: [\n      {\n        role: 'system',\n        content: 'You are a personal knowledge capture assistant. Analyze web content and return structured JSON only. No markdown, no explanation, no code blocks. Just raw JSON.'\n      },\n      {\n        role: 'user',\n        content: 'Analyze this link.\\n\\nURL: ' + originalUrl + '\\nMy personal note: ' + (personalNote || 'none') + '\\nPage content: ' + pageContent + '\\n\\nReturn a JSON object with:\\n- title: clear descriptive title\\n- summary: 2-3 sentence summary of what this is and why someone saved it\\n- tags: array of 3-5 specific relevant tags (lowercase, underscores for spaces e.g. prompt_engineering, saudi_food)\\n- category: single lowercase word that best describes the topic (e.g. ai, travel, cooking, finance, fitness, design, productivity, tech, shopping, health, education)\\n\\nReturn only the JSON object, nothing else.'\n      }\n    ]\n  }\n});\n\n// Line 132: Step 3 - Parse response\nconst raw = groqResponse.choices?.[0]?.message?.content || '';\nlet parsed;\ntry {\n  const match = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(match ? match[0] : raw);\n} catch(e) {\n  parsed = { title: 'Saved link', summary: originalUrl, tags: ['general'], category: 'general' };\n}\n\n// Line 142: Step 4 - Sanitize and build entry\nconst category = (parsed.category || 'general').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'general';\nconst tags = (parsed.tags || ['general']).map(t => '#' + t.toLowerCase().replace(/[\\s-]+/g, '_')).join(' ');\nconst date = new Date().toISOString().split('T')[0];\nconst noteSection = personalNote ? '\\n**My note:** ' + personalNote + '\\n' : '';\nconst reminderSection = reminderDate ? '\\n**Reminder:** ' + reminderDate + '\\n' : '';\nconst entry = '\\n## [' + parsed.title + '](' + originalUrl + ')\\n**Saved:** ' + date + '\\n**Tags:** ' + tags + '\\n> ' + parsed.summary + '\\n' + noteSection + reminderSection + '\\n---\\n';\n\n// Line 149: Step 5 - Write to file\nconst dir = config.knowledge_dir;\nconst filepath = dir + '/' + category + '.md';\nfs.mkdirSync(dir, { recursive: true });\nif (!fs.existsSync(filepath)) {\n  fs.writeFileSync(filepath, '# ' + category + '\\n', 'utf8');\n}\nfs.appendFileSync(filepath, entry, 'utf8');\n\nreturn {\n  success: true,\n  category,\n  title: parsed.title,\n  summary: parsed.summary,\n  tags,\n  url: originalUrl\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        960
+      ],
+      "id": "",
+      "name": "Save Link"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst message = $('Telegram Trigger').item.json.message;\nif (!message.voice && !message.audio) return [];\n\nconst fileId = message.voice?.file_id || message.audio?.file_id;\nconst chatId = message.chat.id;\n\n// Step 1: Get file path from Telegram\nconst fileInfo = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/getFile?file_id=' + fileId\n});\nconst filePath = fileInfo.result.file_path;\nconst fileUrl = 'https://api.telegram.org/file/bot' + config.telegram_bot_token + '/' + filePath;\n\n// Step 2: Send to local Whisper API\nconst result = await this.helpers.httpRequest({\n  method: 'POST',\n  url: config.whisper_api_url,\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    url: fileUrl,\n    key: config.groq_api_key\n  }\n});\n\nconst text = result.text || '';\n\n// Step 3: Detect reminder in transcribed text\nconst date = new Date().toISOString().split('T')[0];\nconst remindMatch = text.match(/\\/remind\\s+(\\d+)(day|days|week|weeks|month|months)/i);\nlet reminderDate = null;\nlet cleanText = text.replace(/\\/remind\\s+\\S+/i, '').trim();\n\nif (remindMatch) {\n  const amount = parseInt(remindMatch[1]);\n  const unit = remindMatch[2].toLowerCase();\n  const d = new Date();\n  if (unit.startsWith('day')) d.setDate(d.getDate() + amount);\n  else if (unit.startsWith('week')) d.setDate(d.getDate() + amount * 7);\n  else if (unit.startsWith('month')) d.setMonth(d.getMonth() + amount);\n  reminderDate = d.toISOString().split('T')[0];\n}\n\n// Step 4: Save to voice.md\nconst reminderSection = reminderDate ? '\\n**Reminder:** ' + reminderDate + '\\n' : '';\nconst entry = '\\n## 🎤 Voice note — ' + date + '\\n> ' + cleanText + '\\n' + reminderSection + '\\n---\\n';\n\nfs.mkdirSync(config.knowledge_dir, { recursive: true });\nfs.appendFileSync(config.knowledge_dir + '/voice.md', entry, 'utf8');\n\nreturn { chatId, text: cleanText, saved: true };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        1136
+      ],
+      "id": "",
+      "name": "Transcribe voice"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst chatId = $('Transcribe voice').item.json.chatId;\nconst text = $('Transcribe voice').item.json.text;\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/sendMessage',\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    chat_id: chatId,\n    text: '🎤 Voice note saved\\n\\n📝 ' + text.slice(0, 4096)\n  }\n});\n\nreturn { sent: true };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        1136
+      ],
+      "id": "",
+      "name": "Reply: voice saved"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst message = $('Telegram Trigger').item.json.message;\nif (!message.photo && !message.document?.mime_type?.startsWith('image')) return [];\n\nconst chatId = message.chat.id;\nconst caption = message.caption || '';\n\n// Step 1: Get the largest photo size\nconst photo = message.photo\n  ? message.photo[message.photo.length - 1]\n  : message.document;\nconst fileId = photo.file_id;\n\n// Step 2: Get file path from Telegram\nconst fileInfo = await this.helpers.httpRequest({\n  method: 'GET',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/getFile?file_id=' + fileId\n});\nconst filePath = fileInfo.result.file_path;\nconst fileUrl = 'https://api.telegram.org/file/bot' + config.telegram_bot_token + '/' + filePath;\n\n// Step 3: Download image and convert to base64\nconst imageBuffer = await this.helpers.httpRequest({\n  method: 'GET',\n  url: fileUrl,\n  returnFullResponse: true,\n  encoding: 'arraybuffer'\n});\nconst base64Image = Buffer.from(imageBuffer.body).toString('base64');\nconst mimeType = filePath.endsWith('.png') ? 'image/png' : 'image/jpeg';\n\n// Step 4: Ask Groq vision to analyze the image\nconst groqResponse = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.groq.com/openai/v1/chat/completions',\n  headers: {\n    'Content-Type': 'application/json',\n    'Authorization': 'Bearer ' + config.groq_api_key\n  },\n  body: {\n    model: 'meta-llama/llama-4-scout-17b-16e-instruct',\n    temperature: 0.1,\n    messages: [\n      {\n        role: 'user',\n        content: [\n          {\n            type: 'image_url',\n            image_url: {\n              url: 'data:' + mimeType + ';base64,' + base64Image\n            }\n          },\n          {\n            type: 'text',\n            text: 'Analyze this image and return ONLY a raw JSON object, no markdown, no explanation.\\n\\nUser caption: ' + (caption || 'none') + '\\n\\nReturn exactly:\\n{\"title\": \"descriptive title\", \"summary\": \"2-3 sentence description of what this image shows and why someone saved it\", \"tags\": [\"tag1\", \"tag2\", \"tag3\"], \"category\": \"single lowercase word: travel, home, shopping, tech, fitness, food, design, inspiration, document, or other relevant word\"}'\n          }\n        ]\n      }\n    ]\n  }\n});\n\n// Step 5: Parse response\nconst raw = groqResponse.choices?.[0]?.message?.content || '';\nlet parsed;\ntry {\n  const match = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(match ? match[0] : raw);\n} catch(e) {\n  parsed = { title: 'Saved image', summary: caption || 'An image', tags: ['image'], category: 'misc' };\n}\n\n// Step 6: Detect reminder in caption\nconst remindMatch = caption.match(/\\/remind\\s+(\\d+)(day|days|week|weeks|month|months)/i);\nlet reminderDate = null;\nconst cleanCaption = caption.replace(/\\/remind\\s+\\S+/i, '').trim();\n\nif (remindMatch) {\n  const amount = parseInt(remindMatch[1]);\n  const unit = remindMatch[2].toLowerCase();\n  const d = new Date();\n  if (unit.startsWith('day')) d.setDate(d.getDate() + amount);\n  else if (unit.startsWith('week')) d.setDate(d.getDate() + amount * 7);\n  else if (unit.startsWith('month')) d.setMonth(d.getMonth() + amount);\n  reminderDate = d.toISOString().split('T')[0];\n}\n\n// Step 7: Build entry and save\nconst date = new Date().toISOString().split('T')[0];\nconst timestamp = Date.now();\nconst category = (parsed.category || 'misc').toLowerCase().replace(/[^a-z0-9]/g, '');\nconst tags = (parsed.tags || ['image']).map(t => '#' + t.toLowerCase().replace(/[\\s-]+/g, '_')).join(' ');\n\nconst imagesDir = config.knowledge_dir + '/images';\nfs.mkdirSync(imagesDir, { recursive: true });\nconst imageFilename = timestamp + '.' + (filePath.endsWith('.png') ? 'png' : 'jpg');\nfs.writeFileSync(imagesDir + '/' + imageFilename, Buffer.from(imageBuffer.body));\n\nconst reminderSection = reminderDate ? '\\n**Reminder:** ' + reminderDate + '\\n' : '';\nconst entry = '\\n## 🖼 ' + parsed.title + '\\n**Saved:** ' + date + '\\n**Tags:** ' + tags + '\\n**Image:** ' + imageFilename + '\\n' + (cleanCaption ? '**Caption:** ' + cleanCaption + '\\n' : '') + '> ' + parsed.summary + '\\n' + reminderSection + '\\n---\\n';\n\nconst categoryFilepath = config.knowledge_dir + '/' + category + '.md';\nif (!fs.existsSync(categoryFilepath)) {\n  fs.writeFileSync(categoryFilepath, '# ' + category + '\\n', 'utf8');\n}\nfs.appendFileSync(categoryFilepath, entry, 'utf8');\n\nreturn { chatId, category, title: parsed.title, summary: parsed.summary, tags, saved: true };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        1360
+      ],
+      "id": "",
+      "name": "Save image"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst result = $('Save image').item.json;\nconst chatId = $('Telegram Trigger').item.json.message.chat.id;\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/sendMessage',\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    chat_id: chatId,\n    text: '🖼 Image saved to ' + result.category + '\\n\\n📌 ' + result.title + '\\n' + result.summary + '\\n\\n🏷 ' + result.tags\n  }\n});\n\nreturn { sent: true };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2496,
+        1360
+      ],
+      "id": "",
+      "name": "Reply: image saved"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst message = $('Telegram Trigger').item.json.message;\nif (!message || !message.text) return [];\nconst question = message.text.trim();\nconst senderId = String(message.from?.id || '');\n\n// ============================================\n// Guest access helpers\n// ============================================\nfunction loadGuests() {\n  try { return JSON.parse(fs.readFileSync(config.guests_file, 'utf8')); } catch(e) { return []; }\n}\nfunction saveGuests(guests) {\n  fs.writeFileSync(config.guests_file, JSON.stringify(guests, null, 2), 'utf8');\n}\nfunction isOwner() {\n  return senderId === String(config.telegram_chat_id);\n}\nfunction getGuest() {\n  const guests = loadGuests();\n  const today = new Date().toISOString().split('T')[0];\n  return guests.find(g => String(g.telegram_id) === senderId && g.expires >= today) || null;\n}\n\n// ============================================\n// Owner-only commands\n// ============================================\nif (isOwner()) {\n\n  if (question.startsWith('http')) return [];\n\n  // /invite command\n  if (question.toLowerCase().startsWith('/invite')) {\n    const parts = question.split(' ');\n    if (parts.length < 4) {\n      return { answer: 'Usage: /invite <telegram_id> <categories> <duration>\\nExample: /invite 123456789 travel,food 7days\\nDuration: 1day, 7days, 30days, permanent' };\n    }\n    const guestId = parts[1];\n    const categories = parts[2].toLowerCase().split(',').map(c => c.trim().replace(/[^a-z0-9]/g, ''));\n    const durationStr = parts[3].toLowerCase();\n    let expires;\n    if (durationStr === 'permanent') {\n      expires = '9999-12-31';\n    } else {\n      const amount = parseInt(durationStr);\n      const unit = durationStr.replace(/[0-9]/g, '');\n      const d = new Date();\n      if (unit.startsWith('day')) d.setDate(d.getDate() + amount);\n      else if (unit.startsWith('week')) d.setDate(d.getDate() + amount * 7);\n      else if (unit.startsWith('month')) d.setMonth(d.getMonth() + amount);\n      expires = d.toISOString().split('T')[0];\n    }\n    const guests = loadGuests();\n    const existingIdx = guests.findIndex(g => String(g.telegram_id) === guestId);\n    const newGuest = { telegram_id: guestId, categories, expires, added: new Date().toISOString().split('T')[0] };\n    if (existingIdx >= 0) guests[existingIdx] = newGuest; else guests.push(newGuest);\n    saveGuests(guests);\n    return { answer: '✅ Guest access granted\\n\\nID: ' + guestId + '\\nCategories: ' + categories.join(', ') + '\\nExpires: ' + expires };\n  }\n\n  // /guests command\n  if (question.toLowerCase().startsWith('/guests')) {\n    const guests = loadGuests();\n    const today = new Date().toISOString().split('T')[0];\n    const active = guests.filter(g => g.expires >= today);\n    if (active.length === 0) return { answer: 'No active guests.' };\n    const list = active.map((g, i) =>\n      `${i + 1}. ID: ${g.telegram_id}\\n   Categories: ${g.categories.join(', ')}\\n   Expires: ${g.expires}`\n    ).join('\\n\\n');\n    return { answer: '👥 Active guests (' + active.length + '):\\n\\n' + list };\n  }\n\n  // /revoke command\n  if (question.toLowerCase().startsWith('/revoke')) {\n    const guestId = question.split(' ')[1];\n    if (!guestId) return { answer: 'Usage: /revoke <telegram_id>' };\n    let guests = loadGuests();\n    const before = guests.length;\n    guests = guests.filter(g => String(g.telegram_id) !== guestId);\n    saveGuests(guests);\n    return { answer: before > guests.length ? '✅ Access revoked for ' + guestId : '❌ Guest not found: ' + guestId };\n  }\n\n  // /list command\n  if (question.toLowerCase().startsWith('/list') || question.toLowerCase().startsWith('list ')) {\n    const listCategory = question.toLowerCase().replace(/^\\/?list\\s+/, '').replace(/[^a-z0-9]/g, '');\n    if (!listCategory) return { answer: 'Usage: /list <category>\\nExample: /list travel' };\n    const filepath = config.knowledge_dir + '/' + listCategory + '.md';\n    try {\n      const content = fs.readFileSync(filepath, 'utf8');\n      const entries = content.split('---').filter(e => e.trim() && e.includes('##'));\n      if (entries.length === 0) return { answer: 'No saved links in category: ' + listCategory };\n      const list = entries.map((e, i) => {\n        const titleMatch = e.match(/## \\[(.+?)\\]\\((.+?)\\)/);\n        const dateMatch = e.match(/\\*\\*Saved:\\*\\* (.+)/);\n        if (titleMatch) return `${i + 1}. ${titleMatch[1]}\\n${titleMatch[2]}\\n📅 ${dateMatch?.[1] || ''}`;\n        return null;\n      }).filter(Boolean).join('\\n\\n');\n      return { answer: `📂 ${listCategory} — ${entries.length} saved links\\n\\n${list}` };\n    } catch(e) {\n      return { answer: 'No saved links in category: ' + listCategory };\n    }\n  }\n\n  // /tag command\n  if (question.toLowerCase().startsWith('/tag')) {\n    const urlMatch = question.match(/https?:\\/\\/[^\\s]+/);\n    const tagMatches = question.match(/#[\\w_]+/g);\n    if (!urlMatch) return { answer: 'Usage: /tag <url> #tag1 #tag2' };\n    const targetUrl = urlMatch[0];\n    const userTags = tagMatches ? tagMatches.join(' ') : '';\n    try {\n      const files = fs.readdirSync(config.knowledge_dir).filter(f => f.endsWith('.md'));\n      for (const file of files) {\n        const filepath = config.knowledge_dir + '/' + file;\n        let content = fs.readFileSync(filepath, 'utf8');\n        if (content.includes(targetUrl)) {\n          if (userTags) {\n            content = content.replace(\n              /(## \\[.+?\\]\\(.+?\\)[\\s\\S]*?\\*\\*Tags:\\*\\* )([^\\n]+)/,\n              (match, prefix, existingTags) => {\n                const existing = existingTags.trim();\n                const newTagsToAdd = (tagMatches || []).filter(t => !existing.includes(t)).join(' ');\n                return prefix + existing + (newTagsToAdd ? ' ' + newTagsToAdd : '');\n              }\n            );\n            fs.writeFileSync(filepath, content, 'utf8');\n          }\n          return { answer: '✅ Tags added to existing entry: ' + userTags };\n        }\n      }\n    } catch(e) {}\n    let pageContent = '';\n    const isVideo = ['tiktok.com','youtube.com','youtu.be','instagram.com'].some(p => targetUrl.includes(p));\n    const isTwitter = targetUrl.includes('x.com') || targetUrl.includes('twitter.com');\n    if (isVideo) {\n      try {\n        const ytResponse = await this.helpers.httpRequest({ method: 'GET', url: config.ytdlp_api_url + '/' + encodeURIComponent(targetUrl), timeout: 35000 });\n        pageContent = ytResponse.content || '';\n      } catch(e) {}\n    } else if (isTwitter) {\n      try {\n        const oembedResponse = await this.helpers.httpRequest({ method: 'GET', url: 'https://publish.twitter.com/oembed?url=' + encodeURIComponent(targetUrl) + '&omit_script=true', timeout: 10000 });\n        const html = oembedResponse.html || '';\n        pageContent = html.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n        if (oembedResponse.author_name) pageContent = 'Author: ' + oembedResponse.author_name + ' | ' + pageContent;\n      } catch(e) {}\n    } else {\n      try {\n        const crawlResponse = await this.helpers.httpRequest({ method: 'POST', url: 'https://api.firecrawl.dev/v1/scrape', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config.firecrawl_api_key }, body: { url: targetUrl, formats: ['markdown'], onlyMainContent: true }, timeout: 30000 });\n        pageContent = (crawlResponse?.data?.markdown || '').slice(0, 3000);\n      } catch(e) { pageContent = 'Could not fetch page.'; }\n    }\n    const tagGroqResponse = await this.helpers.httpRequest({\n      method: 'POST', url: 'https://api.groq.com/openai/v1/chat/completions',\n      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config.groq_api_key },\n      body: { model: 'llama-3.3-70b-versatile', temperature: 0.1, messages: [\n        { role: 'system', content: 'You are a personal knowledge capture assistant. Return structured JSON only.' },\n        { role: 'user', content: 'Analyze this link.\\n\\nURL: ' + targetUrl + '\\nUser tags: ' + userTags + '\\nPage content: ' + pageContent + '\\n\\nReturn JSON:\\n{\"title\": \"descriptive title\", \"summary\": \"2-3 sentence summary\", \"tags\": [\"tag1\", \"tag2\", \"tag3\"], \"category\": \"single lowercase word\"}' }\n      ]}\n    });\n    const tagRaw = tagGroqResponse.choices?.[0]?.message?.content || '';\n    let tagParsed;\n    try { const match = tagRaw.match(/\\{[\\s\\S]*\\}/); tagParsed = JSON.parse(match ? match[0] : tagRaw); }\n    catch(e) { tagParsed = { title: 'Saved link', summary: targetUrl, tags: [], category: 'misc' }; }\n    const tagCategory = (tagParsed.category || 'misc').toLowerCase().replace(/[^a-z0-9]/g, '') || 'misc';\n    const groqTags = (tagParsed.tags || []).map(t => '#' + t.toLowerCase().replace(/[\\s-]+/g, '_'));\n    const allTags = [...new Set([...(tagMatches || []), ...groqTags])].join(' ');\n    const tagDate = new Date().toISOString().split('T')[0];\n    const tagEntry = '\\n## [' + tagParsed.title + '](' + targetUrl + ')\\n**Saved:** ' + tagDate + '\\n**Tags:** ' + allTags + '\\n> ' + tagParsed.summary + '\\n\\n---\\n';\n    const tagFilepath = config.knowledge_dir + '/' + tagCategory + '.md';\n    if (!fs.existsSync(tagFilepath)) fs.writeFileSync(tagFilepath, '# ' + tagCategory + '\\n', 'utf8');\n    fs.appendFileSync(tagFilepath, tagEntry, 'utf8');\n    return { answer: '✅ Saved to ' + tagCategory + ' with tags: ' + allTags + '\\n\\n📌 ' + tagParsed.title + '\\n' + tagParsed.summary };\n  }\n\n  // /rules command\n  if (question.toLowerCase().startsWith('/rules')) {\n    const rulesText = question.replace(/^\\/rules\\s*/i, '').trim();\n    if (!rulesText) {\n      try {\n        const rules = JSON.parse(fs.readFileSync(config.knowledge_dir + '/../rules.json', 'utf8'));\n        if (rules.length === 0) return { answer: 'No rules set yet.\\n\\nUsage: /rules if mentions <keyword> then category=<cat> tags=#tag1 #tag2' };\n        const rulesList = rules.map((r, i) => `${i + 1}. If mentions \"${r.keyword}\" → category: ${r.category}, tags: ${r.tags.join(' ')}`).join('\\n');\n        return { answer: '📋 Current rules:\\n\\n' + rulesList + '\\n\\nTo add: /rules if mentions <keyword> then category=<cat> tags=#tag1 #tag2\\nTo clear: /rules clear' };\n      } catch(e) { return { answer: 'No rules set yet.\\n\\nUsage: /rules if mentions <keyword> then category=<cat> tags=#tag1 #tag2' }; }\n    }\n    if (rulesText === 'clear') { fs.writeFileSync(config.knowledge_dir + '/../rules.json', '[]', 'utf8'); return { answer: '✅ All rules cleared' }; }\n    const keywordMatch = rulesText.match(/if mentions ([^\\s]+)/i);\n    const categoryMatch = rulesText.match(/category=([^\\s]+)/i);\n    const tagsMatch = rulesText.match(/tags=(#[\\w_ #]+)/i) || rulesText.match(/(#[\\w_]+(?:\\s+#[\\w_]+)*)/);\n    if (!keywordMatch || !categoryMatch) return { answer: 'Format: /rules if mentions <keyword> then category=<cat> tags=#tag1 #tag2' };\n    const newRule = { keyword: keywordMatch[1].toLowerCase(), category: categoryMatch[1].toLowerCase().replace(/[^a-z0-9]/g, ''), tags: tagsMatch ? tagsMatch[1].match(/#[\\w_]+/g) || [] : [] };\n    let rules = [];\n    try { rules = JSON.parse(fs.readFileSync(config.knowledge_dir + '/../rules.json', 'utf8')); } catch(e) {}\n    const exists = rules.findIndex(r => r.keyword === newRule.keyword);\n    if (exists >= 0) rules[exists] = newRule; else rules.push(newRule);\n    fs.writeFileSync(config.knowledge_dir + '/../rules.json', JSON.stringify(rules, null, 2), 'utf8');\n    return { answer: '✅ Rule saved: if mentions \"' + newRule.keyword + '\" → category: ' + newRule.category + ', tags: ' + newRule.tags.join(' ') };\n  }\n\n  // /rescan command\n  if (question.toLowerCase().startsWith('/rescan')) {\n    let rules = [];\n    try { rules = JSON.parse(fs.readFileSync(config.knowledge_dir + '/../rules.json', 'utf8')); } catch(e) {}\n    if (rules.length === 0) return { answer: '⚠️ No rules set. Add rules first with /rules command.' };\n    let updatedCount = 0, movedCount = 0;\n    try {\n      const files = fs.readdirSync(config.knowledge_dir).filter(f => f.endsWith('.md'));\n      for (const file of files) {\n        const filepath = config.knowledge_dir + '/' + file;\n        let content = fs.readFileSync(filepath, 'utf8');\n        const originalContent = content;\n        for (const rule of rules) {\n          const entries = content.split('---');\n          const updatedEntries = entries.map(entry => {\n            if (!entry.includes('##')) return entry;\n            if (!entry.toLowerCase().includes(rule.keyword)) return entry;\n            let updated = entry;\n            for (const tag of rule.tags) {\n              if (!updated.includes(tag)) { updated = updated.replace(/(\\*\\*Tags:\\*\\* [^\\n]+)/, '$1 ' + tag); updatedCount++; }\n            }\n            const currentCategory = file.replace('.md', '');\n            if (rule.category !== currentCategory) {\n              const targetFilepath = config.knowledge_dir + '/' + rule.category + '.md';\n              if (!fs.existsSync(targetFilepath)) fs.writeFileSync(targetFilepath, '# ' + rule.category + '\\n', 'utf8');\n              fs.appendFileSync(targetFilepath, updated + '---\\n', 'utf8');\n              movedCount++;\n              return null;\n            }\n            return updated;\n          });\n          content = updatedEntries.filter(e => e !== null).join('---');\n        }\n        if (content !== originalContent) fs.writeFileSync(filepath, content, 'utf8');\n      }\n    } catch(e) { return { answer: '❌ Error during rescan: ' + e.message }; }\n    return { answer: `✅ Rescan complete\\n\\n🏷 Tags updated: ${updatedCount}\\n📂 Entries moved: ${movedCount}` };\n  }\n\n  // /digest command\n  if (question.toLowerCase().startsWith('/digest')) {\n    const args = question.replace(/^\\/digest\\s*/i, '').trim().toLowerCase();\n    let settings = { enabled: true, time: '09:00', summary: true, categories: true, voice: true, images: true, stats: true, motivation: true };\n    try { settings = { ...settings, ...JSON.parse(fs.readFileSync(config.digest_settings_file, 'utf8')) }; } catch(e) {}\n    if (!args) {\n      const status = s => s ? '✅ on' : '❌ off';\n      return { answer: `⚙️ Daily Digest Settings\\n\\nEnabled: ${status(settings.enabled)}\\nTime: ${settings.time}\\n\\nSummaries: ${status(settings.summary)}\\nGroup by category: ${status(settings.categories)}\\nVoice notes: ${status(settings.voice)}\\nImages: ${status(settings.images)}\\nStats comparison: ${status(settings.stats)}\\nMotivation: ${status(settings.motivation)}\\n\\nCommands:\\n/digest on|off\\n/digest summary on|off\\n/digest categories on|off\\n/digest voice on|off\\n/digest images on|off\\n/digest stats on|off\\n/digest motivation on|off\\n/digest time HH:MM` };\n    }\n    const parts = args.split(' ');\n    const setting = parts[0];\n    const value = parts[1];\n    if (setting === 'on') { settings.enabled = true; }\n    else if (setting === 'off') { settings.enabled = false; }\n    else if (setting === 'time' && value) {\n      if (value.match(/^\\d{1,2}:\\d{2}$/)) { settings.time = value; }\n      else return { answer: '❌ Invalid time format. Use HH:MM (e.g. /digest time 08:30)' };\n    } else if (['summary','categories','voice','images','stats','motivation'].includes(setting)) {\n      if (value === 'on') settings[setting] = true;\n      else if (value === 'off') settings[setting] = false;\n      else return { answer: '❌ Use on or off. Example: /digest summary on' };\n    } else {\n      return { answer: '❌ Unknown setting. Send /digest to see all options.' };\n    }\n    fs.writeFileSync(config.digest_settings_file, JSON.stringify(settings, null, 2), 'utf8');\n    const changed = setting === 'on' ? 'Digest enabled' : setting === 'off' ? 'Digest paused' : setting === 'time' ? 'Digest time set to ' + value : setting + ' ' + value;\n    return { answer: '✅ ' + changed + '\\n\\nSend /digest to see all settings.' };\n  }\n\n// /help command\nif (question.toLowerCase().startsWith('/help')) {\n  return { answer: `📖 Available Commands\\n\\n🔗 *Saving*\\nJust send a URL to save it\\n/tag <url> #tag1 #tag2 — save with tags\\n\\n📂 *Browsing*\\n/list <category> — list saved links\\n\\n🏷 *Organization*\\n/rules — manage auto-categorization rules\\n/rescan — apply rules to all entries\\n\\n⏰ *Reminders*\\nAdd /remind 2weeks to any link when saving\\n\\n📊 *Digest*\\n/digest — configure daily digest\\n\\n👥 *Guest Access*\\n/invite <id> <categories> <duration>\\n/guests — list active guests\\n/revoke <id> — remove guest\\n\\n💡 *Tips*\\n• Send a voice note to save transcription\\n• Send an image to save with AI description\\n• Add a note after any URL: https://... this is for kitchen\\n• Forward any message with a link to save it` };\n}\n\n// /suggest command\nif (question.toLowerCase().startsWith('/suggest')) {\n  const instruction = question.replace(/^\\/suggest\\s*/i, '').trim();\n\n  if (!instruction) {\n    return { answer: 'Usage: /suggest <your instruction>\\n\\nExample:\\n/suggest anything about AI tools and agents should go to ai category with #agents #tools tags\\n/suggest travel links about China should have #china tag\\n\\nAfter reviewing suggestions, run /suggest apply to apply them.' };\n  }\n\n  if (instruction === 'apply') {\n    // Apply pending suggestions\n    try {\n      const pending = JSON.parse(fs.readFileSync(config.knowledge_dir + '/../pending_suggestions.json', 'utf8'));\n      if (pending.length === 0) return { answer: 'No pending suggestions to apply.' };\n      let appliedCount = 0;\n      for (const s of pending) {\n        try {\n          const filepath = config.knowledge_dir + '/' + s.currentCategory + '.md';\n          let content = fs.readFileSync(filepath, 'utf8');\n          if (!content.includes(s.url)) continue;\n          // Add new tags\n          if (s.addTags && s.addTags.length > 0) {\n            content = content.replace(\n              new RegExp(`(## \\\\[.+?\\\\]\\\\(${s.url.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\\)[\\\\s\\\\S]*?\\\\*\\\\*Tags:\\\\*\\\\* )([^\\\\n]+)`),\n              (match, prefix, existingTags) => {\n                const existing = existingTags.trim();\n                const newTags = s.addTags.filter(t => !existing.includes(t)).join(' ');\n                return prefix + existing + (newTags ? ' ' + newTags : '');\n              }\n            );\n            fs.writeFileSync(filepath, content, 'utf8');\n          }\n          // Move to new category\n          if (s.newCategory && s.newCategory !== s.currentCategory) {\n            const entryMatch = content.match(new RegExp(`\\\\n## \\\\[.+?\\\\]\\\\(${s.url.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\\)[\\\\s\\\\S]*?---`));\n            if (entryMatch) {\n              const targetFilepath = config.knowledge_dir + '/' + s.newCategory + '.md';\n              if (!fs.existsSync(targetFilepath)) fs.writeFileSync(targetFilepath, '# ' + s.newCategory + '\\n', 'utf8');\n              fs.appendFileSync(targetFilepath, entryMatch[0] + '\\n', 'utf8');\n              content = content.replace(entryMatch[0], '');\n              fs.writeFileSync(filepath, content, 'utf8');\n            }\n          }\n          appliedCount++;\n        } catch(e) {}\n      }\n      fs.writeFileSync(config.knowledge_dir + '/../pending_suggestions.json', '[]', 'utf8');\n      return { answer: '✅ Applied ' + appliedCount + ' suggestions successfully.' };\n    } catch(e) {\n      return { answer: '❌ No pending suggestions found. Run /suggest <instruction> first.' };\n    }\n  }\n\n  // Read all entries\n  let allEntries = [];\n  try {\n    const files = fs.readdirSync(config.knowledge_dir).filter(f => f.endsWith('.md'));\n    for (const file of files) {\n      const content = fs.readFileSync(config.knowledge_dir + '/' + file, 'utf8');\n      const category = file.replace('.md', '');\n      const entries = content.split('---').filter(e => e.trim() && e.includes('##'));\n      for (const entry of entries) {\n        const titleMatch = entry.match(/## \\[(.+?)\\]\\((.+?)\\)/);\n        const tagsMatch = entry.match(/\\*\\*Tags:\\*\\* ([^\\n]+)/);\n        const summaryMatch = entry.match(/> (.+)/);\n        if (titleMatch) {\n          allEntries.push({\n            title: titleMatch[1],\n            url: titleMatch[2],\n            category,\n            tags: tagsMatch?.[1] || '',\n            summary: summaryMatch?.[1] || ''\n          });\n        }\n      }\n    }\n  } catch(e) {}\n\n  if (allEntries.length === 0) return { answer: 'No saved entries found.' };\n\n  // Ask Groq to suggest changes\n  const suggestResponse = await this.helpers.httpRequest({\n    method: 'POST', url: 'https://api.groq.com/openai/v1/chat/completions',\n    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config.groq_api_key },\n    body: {\n      model: 'llama-3.3-70b-versatile',\n      temperature: 0.1,\n      messages: [\n        { role: 'system', content: 'You are a knowledge organization assistant. Analyze saved entries and suggest categorization changes based on user instructions. Return ONLY a JSON array, no markdown.' },\n        { role: 'user', content: 'User instruction: ' + instruction + '\\n\\nSaved entries:\\n' + JSON.stringify(allEntries.slice(0, 50), null, 2) + '\\n\\nReturn a JSON array of suggested changes. Each item:\\n{\"title\": \"...\", \"url\": \"...\", \"currentCategory\": \"...\", \"newCategory\": \"...\" or null, \"addTags\": [\"#tag1\"] or [], \"reason\": \"short reason\"}\\n\\nOnly include entries that need changes. Return [] if nothing needs changing.' }\n      ]\n    }\n  });\n\n  const raw = suggestResponse.choices?.[0]?.message?.content || '[]';\n  let suggestions = [];\n  try {\n    const match = raw.match(/\\[[\\s\\S]*\\]/);\n    suggestions = JSON.parse(match ? match[0] : '[]');\n  } catch(e) { suggestions = []; }\n\n  if (suggestions.length === 0) {\n    return { answer: '✅ No changes needed based on your instruction.' };\n  }\n\n  // Save pending suggestions\n  fs.writeFileSync(config.knowledge_dir + '/../pending_suggestions.json', JSON.stringify(suggestions, null, 2), 'utf8');\n\n  // Format suggestions for display\n  const display = suggestions.slice(0, 10).map((s, i) => {\n    let line = `${i + 1}. *${s.title}*`;\n    if (s.newCategory && s.newCategory !== s.currentCategory) line += `\\n   📂 ${s.currentCategory} → ${s.newCategory}`;\n    if (s.addTags && s.addTags.length > 0) line += `\\n   🏷 Add: ${s.addTags.join(' ')}`;\n    line += `\\n   💡 ${s.reason}`;\n    return line;\n  }).join('\\n\\n');\n\n  const total = suggestions.length;\n  return { answer: `🔍 Found ${total} suggestion${total > 1 ? 's' : ''}:\\n\\n${display}${total > 10 ? '\\n\\n...and ' + (total - 10) + ' more' : ''}\\n\\nSend /suggest apply to apply all changes.` };\n}\n\n  // Handle greetings for owner\n  const greetings = ['hi','hello','hey','مرحبا','هلا','السلام','صباح','مساء'];\n  if (greetings.some(g => question.toLowerCase().startsWith(g))) {\n    return { answer: 'أهلاً! أرسل لي رابط لحفظه، أو اسألني عن شيء حفظته سابقاً 👋' };\n  }\n\n  // Owner full knowledge query\n  const dir = config.knowledge_dir;\n  let knowledge = '';\n  let fileCount = 0;\n  try {\n    const files = fs.readdirSync(dir).filter(f => f.endsWith('.md'));\n    fileCount = files.length;\n    for (const file of files) {\n      try {\n        const content = fs.readFileSync(dir + '/' + file, 'utf8');\n        if (content.trim()) knowledge += '\\n\\n=== ' + file.replace('.md', '') + ' ===\\n' + content.slice(0, 2000);\n      } catch(e) {}\n    }\n  } catch(e) {}\n  if (!knowledge.trim()) knowledge = 'No saved links yet.';\n  else knowledge = knowledge.slice(0, 20000);\n\n  const groqResponse = await this.helpers.httpRequest({\n    method: 'POST', url: 'https://api.groq.com/openai/v1/chat/completions',\n    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config.groq_api_key },\n    body: { model: 'llama-3.3-70b-versatile', temperature: 0.2, messages: [\n      { role: 'system', content: 'You are a personal knowledge assistant. Answer questions using only the saved links provided. Be concise and helpful. For each relevant item include the title and URL. If nothing matches, say so clearly. Respond in the same language as the question.' },\n      { role: 'user', content: 'My saved links (' + fileCount + ' categories):\\n' + knowledge + '\\n\\nQuestion: ' + question }\n    ]}\n  });\n  return { answer: groqResponse.choices?.[0]?.message?.content || 'Could not get an answer.' };\n}\n\n// ============================================\n// Guest access flow\n// ============================================\nconst guest = getGuest();\n\nif (!guest) {\n  return { answer: 'مرحباً! ليس لديك صلاحية للوصول. تواصل مع صاحب البوت للحصول على دعوة.\\n\\nHello! You do not have access. Contact the bot owner for an invite.' };\n}\n\nif (question.startsWith('http') || question.startsWith('/') || question.match(/^[\\w-]+\\.(com|net|org|io|co|app|dev)/i)) {\n  return { answer: 'Guests can only ask questions about saved links.' };\n}\n\nconst guestGreetings = ['hi','hello','hey','مرحبا','هلا','السلام','صباح','مساء'];\nif (guestGreetings.some(g => question.toLowerCase().startsWith(g))) {\n  return { answer: 'أهلاً! يمكنك الاستفسار عن: ' + guest.categories.join(', ') + '\\n\\nHello! You can ask about: ' + guest.categories.join(', ') };\n}\n\nlet guestKnowledge = '';\nlet guestFileCount = 0;\nfor (const cat of guest.categories) {\n  try {\n    const content = fs.readFileSync(config.knowledge_dir + '/' + cat + '.md', 'utf8');\n    if (content.trim()) { guestKnowledge += '\\n\\n=== ' + cat + ' ===\\n' + content.slice(0, 2000); guestFileCount++; }\n  } catch(e) {}\n}\n\nif (!guestKnowledge.trim()) {\n  return { answer: 'No saved links found in your allowed categories: ' + guest.categories.join(', ') };\n}\n\nconst guestGroqResponse = await this.helpers.httpRequest({\n  method: 'POST', url: 'https://api.groq.com/openai/v1/chat/completions',\n  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + config.groq_api_key },\n  body: { model: 'llama-3.3-70b-versatile', temperature: 0.2, messages: [\n    { role: 'system', content: 'You are a helpful knowledge assistant. Answer questions using only the saved links provided. Be concise and include titles and URLs. Respond in the same language as the question.' },\n    { role: 'user', content: 'Saved links (' + guestFileCount + ' categories):\\n' + guestKnowledge.slice(0, 20000) + '\\n\\nQuestion: ' + question }\n  ]}\n});\n\nreturn { answer: guestGroqResponse.choices?.[0]?.message?.content || 'Could not get an answer.' };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        1568
+      ],
+      "id": "",
+      "name": "Answer question"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst answer = $('Answer question').item.json.answer;\nconst chatId = $('Telegram Trigger').item.json.message.chat.id;\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/sendMessage',\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    chat_id: chatId,\n    text: answer.slice(0, 4096)\n  }\n});\n\nreturn { sent: true };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2512,
+        1568
+      ],
+      "id": "",
+      "name": "Reply: answer"
+    },
+    {
+      "parameters": {
+        "jsCode": "const message = $('Telegram Trigger').item.json.message;\nconst text = (message.text || '').trim();\n\nconst isCommand = text.startsWith('/tag') || \n                  text.startsWith('/rules') || \n                  text.startsWith('/rescan') || \n                  text.startsWith('/list');\n\nreturn { \n  message,\n  text,\n  isCommand\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        1280
+      ],
+      "id": "",
+      "name": "Pre-router"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "",
+              "leftValue": "=={{ $json.isCommand === true ? 'yes' : 'no' }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1616,
+        1280
+      ],
+      "id": "",
+      "name": "If"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Pre-router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is it a URL?": {
+      "main": [
+        [
+          {
+            "node": "Save Link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transcribe voice",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Answer question",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply:Saved": {
+      "main": [
+        []
+      ]
+    },
+    "Save Link": {
+      "main": [
+        [
+          {
+            "node": "Reply:Saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe voice": {
+      "main": [
+        [
+          {
+            "node": "Reply: voice saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply: voice saved": {
+      "main": [
+        []
+      ]
+    },
+    "Save image": {
+      "main": [
+        [
+          {
+            "node": "Reply: image saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer question": {
+      "main": [
+        [
+          {
+            "node": "Reply: answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pre-router": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Answer question",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is it a URL?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "YOUR_INSTANCE_ID"
+  },
+  "id": "",
+  "tags": []
+}

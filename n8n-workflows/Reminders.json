@@ -1,0 +1,221 @@
+{
+  "name": "Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst today = new Date().toISOString().split('T')[0];\nlet reminders = [];\n\ntry {\n  const files = fs.readdirSync(config.knowledge_dir).filter(f => f.endsWith('.md'));\n  for (const file of files) {\n    try {\n      const content = fs.readFileSync(config.knowledge_dir + '/' + file, 'utf8');\n      const entries = content.split('---').filter(e => e.trim() && e.includes('##'));\n      for (const entry of entries) {\n        const reminderMatch = entry.match(/\\*\\*Reminder:\\*\\* (\\d{4}-\\d{2}-\\d{2})/);\n        if (reminderMatch && reminderMatch[1] === today) {\n          const titleMatch = entry.match(/## \\[(.+?)\\]\\((.+?)\\)/);\n          const voiceMatch = entry.match(/## 🎤 (.+)/);\n          const imageMatch = entry.match(/## 🖼 (.+)/);\n          const summaryMatch = entry.match(/> (.+)/);\n          if (titleMatch || voiceMatch || imageMatch) {\n            reminders.push({\n              title: titleMatch?.[1] || voiceMatch?.[1] || imageMatch?.[1] || 'Reminder',\n              url: titleMatch?.[2] || '',\n              summary: summaryMatch?.[1] || ''\n            });\n          }\n        }\n      }\n    } catch(e) {}\n  }\n} catch(e) {}\n\nreturn { reminders, count: reminders.length, today };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        -224
+      ],
+      "id": "",
+      "name": "Check reminders"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst reminders = $('Check reminders').item.json.reminders;\nconst today = $('Check reminders').item.json.today;\n\nlet text = '⏰ Reminders for today — ' + today + '\\n\\n';\ntext += reminders.map((r, i) =>\n  `${i + 1}. *${r.title}*\\n${r.url}\\n${r.summary}`\n).join('\\n\\n');\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/sendMessage',\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    chat_id: config.telegram_chat_id,\n    text: text.slice(0, 4096)\n  }\n});\n\nreturn { sent: true, count: reminders.length };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        -240
+      ],
+      "id": "",
+      "name": "Send reminders"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "",
+              "leftValue": "=={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        384,
+        -224
+      ],
+      "id": "",
+      "name": "If there is reminders"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst { digest, totalCount } = $('Generate digest').item.json;\nif (!digest || totalCount === 0) return { skipped: true };\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/sendMessage',\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    chat_id: config.telegram_chat_id,\n    text: digest.slice(0, 4096)\n  }\n});\n\nreturn { sent: true };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        0
+      ],
+      "id": "",
+      "name": "Send digest"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\n// Load digest settings\nlet settings = {\n  enabled: true,\n  time: '09:00',\n  summary: true,\n  categories: true,\n  voice: true,\n  images: true,\n  stats: true,\n  motivation: true\n};\ntry {\n  settings = { ...settings, ...JSON.parse(fs.readFileSync(config.digest_settings_file, 'utf8')) };\n} catch(e) {}\n\n// Check if digest is enabled\nif (!settings.enabled) {\n  return { digest: null, totalCount: 0, skipped: true };\n}\n\nconst today = new Date();\nconst yesterday = new Date(today);\nyesterday.setDate(yesterday.getDate() - 1);\nconst yesterdayStr = yesterday.toISOString().split('T')[0];\n\n// Also get last 7 days for stats comparison\nconst lastWeek = new Date(today);\nlastWeek.setDate(lastWeek.getDate() - 8);\nconst lastWeekStr = lastWeek.toISOString().split('T')[0];\n\nlet totalCount = 0;\nlet linkCount = 0;\nlet voiceCount = 0;\nlet imageCount = 0;\nlet lastWeekTotal = 0;\nlet categorySections = [];\nlet linkEntries = [];\nlet voiceEntries = [];\nlet imageEntries = [];\n\ntry {\n  const files = fs.readdirSync(config.knowledge_dir).filter(f => f.endsWith('.md'));\n\n  for (const file of files) {\n    try {\n      const content = fs.readFileSync(config.knowledge_dir + '/' + file, 'utf8');\n      const category = file.replace('.md', '');\n      const entries = content.split('---').filter(e => e.trim() && e.includes('##'));\n\n      // Count last week entries for stats\n      if (settings.stats) {\n        const weekEntries = entries.filter(e => {\n          const dateMatch = e.match(/\\*\\*Saved:\\*\\* (\\d{4}-\\d{2}-\\d{2})/);\n          if (!dateMatch) return false;\n          return dateMatch[1] >= lastWeekStr && dateMatch[1] < yesterdayStr;\n        });\n        lastWeekTotal += weekEntries.length;\n      }\n\n      // Get yesterday's entries\n      const yesterdayEntries = entries.filter(e => {\n        const dateMatch = e.match(/\\*\\*Saved:\\*\\* (\\d{4}-\\d{2}-\\d{2})/);\n        if (!dateMatch) return false;\n        return dateMatch[1] === yesterdayStr;\n      });\n\n      if (yesterdayEntries.length === 0) continue;\n\n      for (const e of yesterdayEntries) {\n        const isVoice = e.includes('🎤');\n        const isImage = e.includes('🖼');\n        const isLink = !isVoice && !isImage;\n\n        if (isVoice) {\n          voiceCount++;\n          totalCount++;\n          if (settings.voice) {\n            const title = e.match(/## 🎤 (.+)/)?.[1] || 'Voice note';\n            const summary = e.match(/> (.+)/)?.[1] || '';\n            let item = '🎤 ' + title;\n            if (settings.summary && summary) item += '\\n   ' + summary.slice(0, 100);\n            voiceEntries.push(item);\n          }\n        } else if (isImage) {\n          imageCount++;\n          totalCount++;\n          if (settings.images) {\n            const title = e.match(/## 🖼 (.+)/)?.[1] || 'Image';\n            const summary = e.match(/> (.+)/)?.[1] || '';\n            let item = '🖼 ' + title;\n            if (settings.summary && summary) item += '\\n   ' + summary.slice(0, 100);\n            imageEntries.push(item);\n          }\n        } else {\n          linkCount++;\n          totalCount++;\n          const titleMatch = e.match(/## \\[(.+?)\\]\\(/);\n          const urlMatch = e.match(/## \\[.+?\\]\\((.+?)\\)/);\n          const summary = e.match(/> (.+)/)?.[1] || '';\n          const title = titleMatch?.[1] || 'Untitled';\n          let item = '• ' + title;\n          if (urlMatch) item += '\\n  ' + urlMatch[1];\n          if (settings.summary && summary) item += '\\n  ' + summary.slice(0, 100);\n          linkEntries.push({ item, category });\n        }\n      }\n\n      // Group by category\n      if (settings.categories) {\n        const catItems = yesterdayEntries.map(e => {\n          const isVoice = e.includes('🎤');\n          const isImage = e.includes('🖼');\n          const linkTitle = e.match(/## \\[(.+?)\\]\\(/)?.[1];\n          const voiceTitle = e.match(/## 🎤 (.+)/)?.[1];\n          const imageTitle = e.match(/## 🖼 (.+)/)?.[1];\n          const title = linkTitle || voiceTitle || imageTitle || 'Untitled';\n          const urlMatch = e.match(/## \\[.+?\\]\\((.+?)\\)/);\n          const summary = e.match(/> (.+)/)?.[1] || '';\n          const icon = isVoice ? '🎤' : isImage ? '🖼' : '🔗';\n          let item = icon + ' ' + title;\n          if (urlMatch) item += '\\n  ' + urlMatch[1];\n          if (settings.summary && summary) item += '\\n  ' + summary.slice(0, 100);\n          return item;\n        }).join('\\n\\n');\n        categorySections.push('📂 *' + category + '* (' + yesterdayEntries.length + ')\\n' + catItems);\n      }\n    } catch(e) {}\n  }\n} catch(e) {}\n\n// Build digest message\nif (totalCount === 0) {\n  let digest = null;\n  if (settings.motivation) {\n    digest = '🌅 ' + yesterdayStr + '\\n\\nNothing saved yesterday. Today is a new day — save something interesting! 🔗';\n  }\n  return { digest, totalCount: 0, yesterdayStr };\n}\n\nlet parts = [];\n\n// Header\nparts.push('🌅 *Daily Digest — ' + yesterdayStr + '*');\nparts.push('You saved *' + totalCount + ' item' + (totalCount > 1 ? 's' : '') + '* yesterday');\n\n// Stats comparison\nif (settings.stats && lastWeekTotal > 0) {\n  const avg = Math.round(lastWeekTotal / 7);\n  const diff = totalCount - avg;\n  if (diff > 0) parts.push('📈 ' + diff + ' more than your daily average (' + avg + '/day last week)');\n  else if (diff < 0) parts.push('📉 ' + Math.abs(diff) + ' less than your daily average (' + avg + '/day last week)');\n  else parts.push('📊 Right at your daily average (' + avg + '/day last week)');\n}\n\nparts.push('');\n\n// Content by category or by type\nif (settings.categories && categorySections.length > 0) {\n  parts.push(categorySections.join('\\n\\n'));\n} else {\n  // Show by type\n  if (settings.voice && voiceEntries.length > 0) {\n    parts.push('🎤 *Voice notes (' + voiceCount + ')*\\n' + voiceEntries.join('\\n\\n'));\n  }\n  if (settings.images && imageEntries.length > 0) {\n    parts.push('🖼 *Images (' + imageCount + ')*\\n' + imageEntries.join('\\n\\n'));\n  }\n  if (linkEntries.length > 0) {\n    parts.push('🔗 *Links (' + linkCount + ')*\\n' + linkEntries.map(l => l.item).join('\\n\\n'));\n  }\n}\n\n// Motivation\nif (settings.motivation) {\n  const phrases = [\n    'Keep building your knowledge vault! 🧠',\n    'Great saves! Your future self will thank you. 💡',\n    'Knowledge compounds — keep saving! 📚',\n    'Another day, another step toward your goals. 🎯'\n  ];\n  parts.push('\\n' + phrases[Math.floor(Math.random() * phrases.length)]);\n}\n\nconst digest = parts.join('\\n');\nreturn { digest, totalCount, yesterdayStr };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        0
+      ],
+      "id": "",
+      "name": "Generate digest"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nlet brokenLinks = [];\nlet checkedCount = 0;\n\ntry {\n  const files = fs.readdirSync(config.knowledge_dir).filter(f => f.endsWith('.md'));\n  for (const file of files) {\n    try {\n      const content = fs.readFileSync(config.knowledge_dir + '/' + file, 'utf8');\n      const category = file.replace('.md', '');\n\n      const linkMatches = [...content.matchAll(/## \\[(.+?)\\]\\((https?:\\/\\/[^\\)]+)\\)/g)];\n      for (const match of linkMatches) {\n        const title = match[1];\n        const url = match[2];\n\n        // Skip platforms that always block\n        if (url.includes('x.com') || url.includes('twitter.com') ||\n            url.includes('instagram.com') || url.includes('tiktok.com') ||\n            url.includes('t.me')) continue;\n\n        checkedCount++;\n        try {\n          const response = await this.helpers.httpRequest({\n            method: 'GET',\n            url: url,\n            headers: { 'User-Agent': 'Mozilla/5.0' },\n            timeout: 8000,\n            returnFullResponse: true\n          });\n          if (response.statusCode >= 400) {\n            brokenLinks.push({ title, url, category, status: response.statusCode });\n          }\n        } catch(e) {\n          brokenLinks.push({ title, url, category, status: 'unreachable' });\n        }\n      }\n    } catch(e) {}\n  }\n} catch(e) {}\n\nreturn { brokenLinks, brokenCount: brokenLinks.length, checkedCount };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        224
+      ],
+      "id": "",
+      "name": "Check broken links"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst { brokenLinks, brokenCount, checkedCount } = $('Check broken links').item.json;\nif (brokenCount === 0) return { skipped: true };\n\nlet text = '🔗 Broken Links Report\\n\\n';\ntext += checkedCount + ' links checked, ' + brokenCount + ' broken\\n\\n';\ntext += brokenLinks.map((l, i) =>\n  `${i + 1}. ${l.title}\\n❌ ${l.status}\\n📂 ${l.category}\\n${l.url}`\n).join('\\n\\n');\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/sendMessage',\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    chat_id: config.telegram_chat_id,\n    text: text.slice(0, 4096)\n  }\n});\n\nreturn { sent: true, brokenCount };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        224
+      ],
+      "id": "",
+      "name": "Report broken links"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check reminders",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate digest",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check broken links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check reminders": {
+      "main": [
+        [
+          {
+            "node": "If there is reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If there is reminders": {
+      "main": [
+        [
+          {
+            "node": "Send reminders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Send digest": {
+      "main": [
+        []
+      ]
+    },
+    "Generate digest": {
+      "main": [
+        [
+          {
+            "node": "Send digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check broken links": {
+      "main": [
+        [
+          {
+            "node": "Report broken links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "",
+  "meta": {
+    "instanceId": "YOUR_INSTANCE_ID"
+  },
+  "id": "",
+  "tags": []
+}

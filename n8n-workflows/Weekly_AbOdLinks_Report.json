@@ -1,0 +1,90 @@
+{
+  "name": "Weekly AbOdLinks Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst oneWeekAgo = new Date();\noneWeekAgo.setDate(oneWeekAgo.getDate() - 7);\nconst weekAgoStr = oneWeekAgo.toISOString().split('T')[0];\n\nlet totalCount = 0;\nlet reportSections = [];\n\ntry {\n  const files = fs.readdirSync(config.knowledge_dir).filter(f => f.endsWith('.md'));\n\n  for (const file of files) {\n    try {\n      const content = fs.readFileSync(config.knowledge_dir + '/' + file, 'utf8');\n      const category = file.replace('.md', '');\n\n      const entries = content.split('---').filter(e => e.trim() && e.includes('##'));\n      const weekEntries = entries.filter(e => {\n        const dateMatch = e.match(/\\*\\*Saved:\\*\\* (\\d{4}-\\d{2}-\\d{2})/);\n        if (!dateMatch) return false;\n        return dateMatch[1] >= weekAgoStr;\n      });\n\n      if (weekEntries.length > 0) {\n        totalCount += weekEntries.length;\n        const titles = weekEntries.map(e => {\n          const titleMatch = e.match(/## \\[?(.+?)\\]?\\(/);\n          const plainTitle = e.match(/## 🎤 (.+)/);\n          const imageTitle = e.match(/## 🖼 (.+)/);\n          return '• ' + (titleMatch?.[1] || plainTitle?.[1] || imageTitle?.[1] || 'Untitled');\n        }).join('\\n');\n\n        reportSections.push(`📂 *${category}* (${weekEntries.length})\\n${titles}`);\n      }\n    } catch(e) {}\n  }\n} catch(e) {}\n\nconst date = new Date().toISOString().split('T')[0];\nlet report;\n\nif (totalCount === 0) {\n  report = `📊 Weekly Report — ${date}\\n\\nNothing saved this week. Start saving links! 🔗`;\n} else {\n  report = `📊 Weekly Report — ${date}\\n\\n${totalCount} items saved this week\\n\\n${reportSections.join('\\n\\n')}`;\n}\n\nreturn { report, totalCount };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "",
+      "name": "Generate report"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));\n\nconst report = $('Generate report').item.json.report;\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.telegram.org/bot' + config.telegram_bot_token + '/sendMessage',\n  headers: { 'Content-Type': 'application/json' },\n  body: {\n    chat_id: config.telegram_chat_id,\n    text: report.slice(0, 4096)\n  }\n});\n\nreturn { sent: true };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "",
+      "name": "Send report"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate report": {
+      "main": [
+        [
+          {
+            "node": "Send report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "",
+  "meta": {
+    "instanceId": "YOUR_INSTANCE_ID"
+  },
+  "id": "",
+  "tags": []
+}
